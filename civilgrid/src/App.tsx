@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
+import "./index.css";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -59,18 +60,17 @@ function formatCurrency(n: number): string {
 
 function formatDate(ts: number | null): string {
 	if (!ts) return "—";
-	return new Date(ts).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
+	return new Date(ts).toLocaleDateString("en-US", { year: "numeric", month: "short" });
 }
 
-function phaseClass(phase: string): string {
-	if (!phase) return "phase-Other";
-	if (phase.toLowerCase().includes("design")) return "phase-Design";
-	if (phase.toLowerCase().includes("construct")) return "phase-Construction";
-	if (phase.toLowerCase().includes("close")) return "phase-Closeout";
-	return "phase-Other";
+function phaseColor(phase: string): string {
+	const p = (phase || "").toLowerCase();
+	if (p.includes("design")) return "#6366f1";
+	if (p.includes("construct")) return "#f59e0b";
+	if (p.includes("close")) return "#10b981";
+	return "#6b7280";
 }
 
-// Point-in-polygon using ray casting
 function pointInPolygon(point: [number, number], vs: [number, number][]): boolean {
 	const [x, y] = point;
 	let inside = false;
@@ -85,17 +85,16 @@ function pointInPolygon(point: [number, number], vs: [number, number][]): boolea
 	return inside;
 }
 
-function haversineDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+function haversine(lat1: number, lon1: number, lat2: number, lon2: number): number {
 	const R = 6371000;
-	const φ1 = (lat1 * Math.PI) / 180;
-	const φ2 = (lat2 * Math.PI) / 180;
-	const Δφ = ((lat2 - lat1) * Math.PI) / 180;
-	const Δλ = ((lon2 - lon1) * Math.PI) / 180;
-	const a = Math.sin(Δφ / 2) ** 2 + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) ** 2;
+	const f1 = (lat1 * Math.PI) / 180,
+		f2 = (lat2 * Math.PI) / 180;
+	const df = ((lat2 - lat1) * Math.PI) / 180;
+	const dl = ((lon2 - lon1) * Math.PI) / 180;
+	const a = Math.sin(df / 2) ** 2 + Math.cos(f1) * Math.cos(f2) * Math.sin(dl / 2) ** 2;
 	return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-// Get centroid of a polygon
 function polygonCentroid(coords: [number, number][][]): [number, number] {
 	const ring = coords[0];
 	let lat = 0,
@@ -107,95 +106,71 @@ function polygonCentroid(coords: [number, number][][]): [number, number] {
 	return [lat / ring.length, lon / ring.length];
 }
 
-// Centroid for any geometry
 function getCentroid(geometry: GeoJSON.Geometry): [number, number] | null {
-	if (geometry.type === "Point") {
-		const [lon, lat] = geometry.coordinates as [number, number];
-		return [lat, lon];
-	}
-	if (geometry.type === "Polygon") {
-		return polygonCentroid(geometry.coordinates as [number, number][][]);
-	}
-	if (geometry.type === "MultiPolygon") {
-		return polygonCentroid((geometry.coordinates as [number, number][][][])[0]);
+	if (geometry.type === "Point") return [(geometry.coordinates as number[])[1], (geometry.coordinates as number[])[0]];
+	if (geometry.type === "Polygon") return polygonCentroid(geometry.coordinates as [number, number][][]);
+	if (geometry.type === "MultiPolygon") return polygonCentroid((geometry.coordinates as [number, number][][][])[0]);
+	if (geometry.type === "LineString") {
+		const c = geometry.coordinates as [number, number][];
+		const mid = c[Math.floor(c.length / 2)];
+		return [mid[1], mid[0]];
 	}
 	return null;
 }
 
-// Check if EV point is inside CIP polygon (or within BUFFER_M metres of it)
-const BUFFER_M = 100; // 100 m proximity buffer
+const BUFFER_M = 100;
 
 function evNearCIP(ev: EVFeature, cip: CIPFeature): boolean {
 	const [evLon, evLat] = ev.geometry.coordinates;
 	const geom = cip.geometry;
-
 	if (geom.type === "Polygon") {
-		const ring = (geom.coordinates as [number, number][][])[0];
-		if (pointInPolygon([evLon, evLat], ring)) return true;
-		// buffer: check distance to centroid of polygon vs rough radius
+		if (pointInPolygon([evLon, evLat], (geom.coordinates as [number, number][][])[0])) return true;
 		const [cLat, cLon] = polygonCentroid(geom.coordinates as [number, number][][]);
-		return haversineDistance(evLat, evLon, cLat, cLon) < BUFFER_M;
+		return haversine(evLat, evLon, cLat, cLon) < BUFFER_M;
 	}
-
 	if (geom.type === "MultiPolygon") {
 		for (const poly of geom.coordinates as [number, number][][][]) {
 			if (pointInPolygon([evLon, evLat], poly[0])) return true;
 			const [cLat, cLon] = polygonCentroid([poly[0]]);
-			if (haversineDistance(evLat, evLon, cLat, cLon) < BUFFER_M) return true;
+			if (haversine(evLat, evLon, cLat, cLon) < BUFFER_M) return true;
 		}
 		return false;
 	}
-
 	if (geom.type === "Point") {
 		const [cLon, cLat] = geom.coordinates as [number, number];
-		return haversineDistance(evLat, evLon, cLat, cLon) < BUFFER_M;
+		return haversine(evLat, evLon, cLat, cLon) < BUFFER_M;
 	}
-
 	if (geom.type === "LineString") {
-		const coords = geom.coordinates as [number, number][];
-		for (const [pLon, pLat] of coords) {
-			if (haversineDistance(evLat, evLon, pLat, pLon) < BUFFER_M) return true;
-		}
+		for (const [pLon, pLat] of geom.coordinates as [number, number][]) if (haversine(evLat, evLon, pLat, pLon) < BUFFER_M) return true;
 		return false;
 	}
-
-	if (geom.type === "MultiPoint") {
-		for (const [pLon, pLat] of geom.coordinates as [number, number][]) {
-			if (haversineDistance(evLat, evLon, pLat, pLon) < BUFFER_M) return true;
-		}
-		return false;
-	}
-
 	return false;
 }
 
-// EV marker icons
 const evNormalIcon = L.divIcon({
 	className: "",
-	html: `<div style="width:10px;height:10px;background:#16a34a;border:2px solid white;border-radius:50%;box-shadow:0 1px 4px rgba(0,0,0,0.4)"></div>`,
-	iconSize: [10, 10],
-	iconAnchor: [5, 5],
+	html: `<div style="width:9px;height:9px;background:#16a34a;border:2px solid white;border-radius:50%;box-shadow:0 1px 3px rgba(0,0,0,0.4)"></div>`,
+	iconSize: [9, 9],
+	iconAnchor: [4, 4],
 });
-
 const evHighlightIcon = L.divIcon({
 	className: "",
-	html: `<div style="width:14px;height:14px;background:#f59e0b;border:2.5px solid white;border-radius:50%;box-shadow:0 1px 6px rgba(0,0,0,0.5)"></div>`,
-	iconSize: [14, 14],
-	iconAnchor: [7, 7],
+	html: `<div style="width:13px;height:13px;background:#f59e0b;border:2px solid white;border-radius:50%;box-shadow:0 1px 5px rgba(0,0,0,0.5)"></div>`,
+	iconSize: [13, 13],
+	iconAnchor: [6, 6],
 });
 
-// ── Main App ───────────────────────────────────────────────────────────────
+// ── App ────────────────────────────────────────────────────────────────────
 
 const App: React.FC = () => {
 	const mapRef = useRef<L.Map | null>(null);
 	const mapElRef = useRef<HTMLDivElement>(null);
-	const cipLayersRef = useRef<Map<number, L.Layer>>(new Map());
-	const evMarkersRef = useRef<Map<number, L.Marker>>(new Map());
-	const selectedLayerRef = useRef<L.Layer | null>(null);
+	const cipLayers = useRef<Map<number, L.GeoJSON>>(new Map());
+	const evMarkers = useRef<Map<number, L.Marker>>(new Map());
 
 	const [cipData, setCipData] = useState<FeatureCollection<GeoJSON.Geometry, CIPProperties> | null>(null);
 	const [evData, setEvData] = useState<FeatureCollection<GeoJSON.Point, EVProperties> | null>(null);
-	const [selectedCIP, setSelectedCIP] = useState<CIPFeature | null>(null);
+	const [selectedId, setSelectedId] = useState<number | null>(null);
 	const [searchQuery, setSearchQuery] = useState("");
 	const [phaseFilter, setPhaseFilter] = useState("All");
 	const [programFilter, setProgramFilter] = useState("All");
@@ -211,7 +186,7 @@ const App: React.FC = () => {
 		});
 	}, []);
 
-	// Compute EV counts per CIP project
+	// Synergy map
 	const evCountPerCIP = useMemo(() => {
 		if (!cipData || !evData) return new Map<number, EVFeature[]>();
 		const map = new Map<number, EVFeature[]>();
@@ -222,17 +197,15 @@ const App: React.FC = () => {
 		return map;
 	}, [cipData, evData]);
 
-	// Unique phases and programs
+	// Filter options
 	const phases = useMemo(() => {
 		if (!cipData) return [] as string[];
-		const set = new Set(cipData.features.map((f) => f.properties.ActivePhaseName || f.properties.CurrentPhaseDescription || "Other").filter(Boolean));
-		return Array.from(set).sort();
+		return Array.from(new Set(cipData.features.map((f) => f.properties.ActivePhaseName || f.properties.CurrentPhaseDescription || "Other").filter(Boolean))).sort();
 	}, [cipData]);
 
 	const programs = useMemo(() => {
 		if (!cipData) return [] as string[];
-		const set = new Set(cipData.features.map((f) => f.properties.ProgramName).filter(Boolean));
-		return Array.from(set).sort();
+		return Array.from(new Set(cipData.features.map((f) => f.properties.ProgramName).filter(Boolean))).sort();
 	}, [cipData]);
 
 	// Filtered list
@@ -242,7 +215,6 @@ const App: React.FC = () => {
 			const q = searchQuery.toLowerCase();
 			if (q && !f.properties.ProjectTitle?.toLowerCase().includes(q) && !f.properties.ProgramName?.toLowerCase().includes(q) && !f.properties.ProjectNumber?.toLowerCase().includes(q))
 				return false;
-
 			const phase = f.properties.ActivePhaseName || f.properties.CurrentPhaseDescription || "Other";
 			if (phaseFilter !== "All" && phase !== phaseFilter) return false;
 			if (programFilter !== "All" && f.properties.ProgramName !== programFilter) return false;
@@ -251,49 +223,55 @@ const App: React.FC = () => {
 		});
 	}, [cipData, searchQuery, phaseFilter, programFilter, onlySynergy, evCountPerCIP]);
 
+	// Selected feature (for detail panel)
+	const selectedFeature = useMemo(() => (selectedId !== null ? (cipData?.features.find((f) => f.id === selectedId) ?? null) : null), [selectedId, cipData]);
+
 	// Init map
 	useEffect(() => {
-		if (!mapElRef.current) return;
+		const container = mapElRef.current;
+		if (!container) return;
+
+		// Clean up any previous instance
 		if (mapRef.current) {
 			mapRef.current.remove();
 			mapRef.current = null;
 		}
-		mapRef.current = L.map(mapElRef.current, { center: [34.05, -118.25], zoom: 11 });
+
+		const map = L.map(container, { center: [34.05, -118.25], zoom: 11 });
 		L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
 			attribution: "&copy; OpenStreetMap &copy; CARTO",
 			maxZoom: 19,
-		}).addTo(mapRef.current);
+		}).addTo(map);
+		mapRef.current = map;
+
+		// Force Leaflet to recalculate size after paint
+		requestAnimationFrame(() => {
+			map.invalidateSize();
+		});
 
 		return () => {
-			mapRef.current?.remove();
+			map.remove();
 			mapRef.current = null;
 		};
 	}, []);
 
-	// Render EV markers
+	// Draw EV markers
 	useEffect(() => {
 		if (!mapRef.current || !evData) return;
-		const map = mapRef.current;
-
-		evMarkersRef.current.forEach((m) => m.remove());
-		evMarkersRef.current.clear();
-
+		evMarkers.current.forEach((m) => m.remove());
+		evMarkers.current.clear();
 		evData.features.forEach((ev) => {
 			const [lon, lat] = ev.geometry.coordinates;
-			const marker = L.marker([lat, lon], { icon: evNormalIcon }).bindPopup(`<b>EV Charger #${ev.properties.OBJECTID}</b>`);
-			marker.addTo(map);
-			evMarkersRef.current.set(ev.properties.OBJECTID, marker);
+			const m = L.marker([lat, lon], { icon: evNormalIcon }).addTo(mapRef.current!);
+			evMarkers.current.set(ev.properties.OBJECTID, m);
 		});
 	}, [evData]);
 
-	// Render CIP polygons
+	// Draw CIP polygons
 	useEffect(() => {
 		if (!mapRef.current || !cipData) return;
-		const map = mapRef.current;
-
-		cipLayersRef.current.forEach((l) => l.remove());
-		cipLayersRef.current.clear();
-
+		cipLayers.current.forEach((l) => l.remove());
+		cipLayers.current.clear();
 		cipData.features.forEach((feature) => {
 			const hasSynergy = evCountPerCIP.has(feature.id);
 			try {
@@ -304,300 +282,324 @@ const App: React.FC = () => {
 						fillColor: hasSynergy ? "#fef3c7" : "#dbeafe",
 						fillOpacity: 0.4,
 					},
-					onEachFeature: (_, l) => {
-						l.on("click", () => handleSelectCIP(feature));
-					},
 				});
-				layer.addTo(map);
-				cipLayersRef.current.set(feature.id, layer);
-			} catch (e) {
-				// skip malformed geometries
-			}
+				layer.on("click", () => selectProject(feature.id));
+				layer.addTo(mapRef.current!);
+				cipLayers.current.set(feature.id, layer);
+			} catch (_) {}
 		});
 	}, [cipData, evCountPerCIP]); // eslint-disable-line
 
-	const highlightEVsForCIP = useCallback(
-		(cip: CIPFeature | null) => {
-			// Reset all EV markers
-			evMarkersRef.current.forEach((marker, id) => {
-				marker.setIcon(evNormalIcon);
-				marker.setZIndexOffset(0);
-			});
-
-			if (!cip) return;
-
-			const nearby = evCountPerCIP.get(cip.id) || [];
-			nearby.forEach((ev) => {
-				const marker = evMarkersRef.current.get(ev.properties.OBJECTID);
-				if (marker) {
-					marker.setIcon(evHighlightIcon);
-					marker.setZIndexOffset(1000);
-				}
-			});
-		},
-		[evCountPerCIP],
-	);
-
-	const handleSelectCIP = useCallback(
-		(feature: CIPFeature) => {
-			setSelectedCIP((prev) => {
-				const next = prev?.id === feature.id ? null : feature;
-
-				// Reset previous highlight
-				if (prev) {
-					const layer = cipLayersRef.current.get(prev.id);
-					if (layer) {
-						const hasSynergy = evCountPerCIP.has(prev.id);
-						(layer as L.GeoJSON).setStyle({
-							color: hasSynergy ? "#f59e0b" : "#3b82f6",
-							weight: hasSynergy ? 2.5 : 1.5,
-							fillColor: hasSynergy ? "#fef3c7" : "#dbeafe",
-							fillOpacity: 0.4,
-						});
+	// Select / deselect a project
+	const selectProject = useCallback(
+		(id: number | null) => {
+			setSelectedId((prev) => {
+				// Reset previous
+				if (prev !== null) {
+					const old = cipLayers.current.get(prev);
+					if (old) {
+						const s = evCountPerCIP.has(prev);
+						old.setStyle({ color: s ? "#f59e0b" : "#3b82f6", weight: s ? 2.5 : 1.5, fillColor: s ? "#fef3c7" : "#dbeafe", fillOpacity: 0.4 });
 					}
+					(evCountPerCIP.get(prev) || []).forEach((ev) => evMarkers.current.get(ev.properties.OBJECTID)?.setIcon(evNormalIcon));
 				}
 
-				if (next) {
-					const layer = cipLayersRef.current.get(next.id);
-					if (layer) {
-						(layer as L.GeoJSON).setStyle({
-							color: "#7c3aed",
-							weight: 3,
-							fillColor: "#ede9fe",
-							fillOpacity: 0.6,
-						});
-					}
-					highlightEVsForCIP(next);
+				const next = prev === id ? null : id;
 
-					// Fly to
-					const centroid = getCentroid(next.geometry);
-					if (centroid && mapRef.current) {
-						mapRef.current.flyTo(centroid, 15, { duration: 0.8 });
+				if (next !== null) {
+					cipLayers.current.get(next)?.setStyle({ color: "#7c3aed", weight: 3, fillColor: "#ede9fe", fillOpacity: 0.6 });
+					(evCountPerCIP.get(next) || []).forEach((ev) => evMarkers.current.get(ev.properties.OBJECTID)?.setIcon(evHighlightIcon));
+					const feature = cipData?.features.find((f) => f.id === next);
+					if (feature) {
+						const c = getCentroid(feature.geometry);
+						if (c && mapRef.current) mapRef.current.flyTo(c, 15, { duration: 0.7 });
 					}
-				} else {
-					highlightEVsForCIP(null);
 				}
 
 				return next;
 			});
 		},
-		[evCountPerCIP, highlightEVsForCIP],
+		[cipData, evCountPerCIP],
 	);
 
-	const handleListClick = (feature: CIPFeature) => {
-		handleSelectCIP(feature);
-	};
-
-	const totalSynergyProjects = evCountPerCIP.size;
-	const totalNearbyEVs = useMemo(() => {
-		let total = 0;
-		evCountPerCIP.forEach((evs) => {
-			total += evs.length;
-		});
-		return total;
-	}, [evCountPerCIP]);
+	// ── Render ──────────────────────────────────────────────────────────────
 
 	if (loading) {
 		return (
-			<div className="d-flex align-items-center justify-content-center" style={{ height: "100vh", background: "#f0f2f5" }}>
-				<div className="text-center">
-					<div className="spinner-border text-primary mb-3" role="status" />
-					<p className="text-muted">Loading LA CIP & EV data…</p>
+			<div className="loading-screen">
+				<div style={{ textAlign: "center" }}>
+					<div className="spinner-border text-primary mb-2" role="status" />
+					<p style={{ color: "#6c757d", fontSize: "0.85rem", margin: 0 }}>Loading data…</p>
 				</div>
 			</div>
 		);
 	}
 
+	const legendItems = [
+		{ bg: "#dbeafe", border: "#3b82f6", label: "CIP Project" },
+		{ bg: "#fef3c7", border: "#f59e0b", label: "CIP + EV Synergy ⚡" },
+		{ bg: "#ede9fe", border: "#7c3aed", label: "Selected" },
+	];
+
 	return (
-		<div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
-			{/* Header */}
-			<div className="app-header">
-				<svg width="28" height="28" viewBox="0 0 28 28" fill="none">
-					<circle cx="14" cy="14" r="14" fill="#FFD700" />
-					<text x="14" y="19" textAnchor="middle" fontSize="13" fontWeight="bold" fill="#003087">
-						LA
+		<div className="app-shell">
+			{/* ── Header ── */}
+			<header className="app-header">
+				<svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true">
+					<rect width="26" height="26" rx="5" fill="#FFD700" />
+					<text x="13" y="18" textAnchor="middle" fontSize="11" fontWeight="bold" fill="#1e3a5f">
+						CG
 					</text>
 				</svg>
-				<h1>City of Los Angeles — CIP & EV Finder</h1>
-				<span className="badge-la">CITY MANAGER TOOL</span>
-			</div>
+				<span className="logo-text">CivilGrid</span>
+				<span className="logo-sub">Los Angeles · CIP &amp; EV Synergy</span>
+			</header>
 
-			<div className="layout">
-				{/* Sidebar */}
+			{/* ── Body ── */}
+			<div className="app-body">
+				{/* ── Sidebar: filters + list ── */}
 				<div className="sidebar">
-					<div className="sidebar-header">
-						<h6>Capital Improvement Projects</h6>
-						<div className="sidebar-search">
-							<input type="text" placeholder="Search by title, program, number…" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
+					{/* Filters */}
+					<div className="filter-bar">
+						<input type="text" placeholder="Search title, program, number…" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} aria-label="Search projects" />
+						<div className="filter-row">
+							<select value={phaseFilter} onChange={(e) => setPhaseFilter(e.target.value)} aria-label="Filter by phase">
+								<option value="All">All Phases</option>
+								{phases.map((p) => (
+									<option key={p}>{p}</option>
+								))}
+							</select>
+							<select value={programFilter} onChange={(e) => setProgramFilter(e.target.value)} aria-label="Filter by program">
+								<option value="All">All Programs</option>
+								{programs.map((p) => (
+									<option key={p}>{p}</option>
+								))}
+							</select>
+						</div>
+						<div className="filter-row" style={{ justifyContent: "space-between" }}>
+							<label className="synergy-check">
+								<input type="checkbox" checked={onlySynergy} onChange={(e) => setOnlySynergy(e.target.checked)} />
+								Synergy only ⚡
+							</label>
+							<span className="filter-stats">
+								{filteredCIP.length} projects · <strong>⚡ {evCountPerCIP.size} w/ EV</strong>
+							</span>
 						</div>
 					</div>
 
-					<div className="filter-row">
-						<select value={phaseFilter} onChange={(e) => setPhaseFilter(e.target.value)}>
-							<option value="All">All Phases</option>
-							{phases.map((p) => (
-								<option key={p} value={p}>
-									{p}
-								</option>
-							))}
-						</select>
-						<select value={programFilter} onChange={(e) => setProgramFilter(e.target.value)}>
-							<option value="All">All Programs</option>
-							{programs.map((p) => (
-								<option key={p} value={p}>
-									{p}
-								</option>
-							))}
-						</select>
+					{/* Desktop / Tablet: Table */}
+					<div className="table-wrap" role="region" aria-label="Projects table">
+						<table className="data-table">
+							<thead>
+								<tr>
+									<th>Project</th>
+									<th className="col-phase">Phase</th>
+									<th>Cost</th>
+									<th>EV</th>
+									<th className="col-pm">PM</th>
+								</tr>
+							</thead>
+							<tbody>
+								{filteredCIP.length === 0 && (
+									<tr>
+										<td colSpan={5} className="empty-state">
+											No projects match your filters.
+										</td>
+									</tr>
+								)}
+								{filteredCIP.map((feature) => {
+									const p = feature.properties;
+									const phase = p.ActivePhaseName || p.CurrentPhaseDescription || "Other";
+									const evCount = evCountPerCIP.get(feature.id)?.length ?? 0;
+									const sel = selectedId === feature.id;
+									return (
+										<tr
+											key={feature.id}
+											className={sel ? "selected" : ""}
+											onClick={() => selectProject(feature.id)}
+											tabIndex={0}
+											onKeyDown={(e) => e.key === "Enter" && selectProject(feature.id)}
+											aria-selected={sel}
+										>
+											<td>
+												<div className="cell-title">{p.ProjectTitle || `Project ${p.ProjectNumber}`}</div>
+												<div className="cell-sub">#{p.ProjectNumber}</div>
+											</td>
+											<td className="col-phase">
+												<span className="badge-phase" style={{ background: phaseColor(phase) + "22", color: phaseColor(phase) }}>
+													{phase}
+												</span>
+											</td>
+											<td style={{ whiteSpace: "nowrap", color: "#374151" }}>{formatCurrency(p.ConstructionCost)}</td>
+											<td style={{ whiteSpace: "nowrap" }}>{evCount > 0 ? <span className="badge-ev">⚡ {evCount}</span> : <span className="badge-ev-none">—</span>}</td>
+											<td className="col-pm" style={{ whiteSpace: "nowrap", color: "#374151" }}>
+												{p.PM_Name || "—"}
+											</td>
+										</tr>
+									);
+								})}
+							</tbody>
+						</table>
 					</div>
 
-					<div className="filter-row" style={{ paddingTop: 4, paddingBottom: 4 }}>
-						<label style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: 6, cursor: "pointer", color: "#374151" }}>
-							<input type="checkbox" checked={onlySynergy} onChange={(e) => setOnlySynergy(e.target.checked)} />
-							Show only synergy projects
-							<span style={{ color: "#f59e0b", fontWeight: 700 }}>⚡</span>
-						</label>
-					</div>
-
-					<div className="stats-bar">
-						<span className="stat-pill cip">{filteredCIP.length} CIP Projects</span>
-						<span className="stat-pill ev">{evData?.features.length} EV Chargers</span>
-						<span className="stat-pill synergy">
-							⚡ {totalSynergyProjects} w/ EV ({totalNearbyEVs} chargers)
-						</span>
-					</div>
-
-					<div className="project-list">
-						{filteredCIP.length === 0 && <div className="no-results">No projects match your filters.</div>}
+					{/* Mobile: Cards */}
+					<div className="card-list" role="list" aria-label="Projects list">
+						{filteredCIP.length === 0 && <div className="empty-state">No projects match your filters.</div>}
 						{filteredCIP.map((feature) => {
 							const p = feature.properties;
 							const phase = p.ActivePhaseName || p.CurrentPhaseDescription || "Other";
-							const evs = evCountPerCIP.get(feature.id);
-							const evCount = evs ? evs.length : 0;
+							const evCount = evCountPerCIP.get(feature.id)?.length ?? 0;
+							const sel = selectedId === feature.id;
 							return (
-								<div key={feature.id} className={`project-item ${selectedCIP?.id === feature.id ? "selected" : ""}`} onClick={() => handleListClick(feature)}>
-									<div className="proj-title">{p.ProjectTitle || `Project #${p.ProjectNumber}`}</div>
-									<div className="proj-meta">
-										<span className={`phase-badge ${phaseClass(phase)}`}>{phase}</span>
-										<span>{p.ProgramName}</span>
-										<span className={`ev-count-badge ${evCount === 0 ? "zero" : ""}`}>{evCount > 0 ? `⚡ ${evCount} EV` : "No EV nearby"}</span>
+								<div
+									key={feature.id}
+									className={`project-card${sel ? " selected" : ""}`}
+									onClick={() => selectProject(feature.id)}
+									role="listitem"
+									tabIndex={0}
+									onKeyDown={(e) => e.key === "Enter" && selectProject(feature.id)}
+									aria-selected={sel}
+								>
+									<div className="card-title">{p.ProjectTitle || `Project ${p.ProjectNumber}`}</div>
+									<div className="card-meta">
+										<span className="badge-phase" style={{ background: phaseColor(phase) + "22", color: phaseColor(phase) }}>
+											{phase}
+										</span>
+										{evCount > 0 && <span className="badge-ev">⚡ {evCount} EV nearby</span>}
+									</div>
+									<div className="card-details">
+										<div className="card-detail-row">
+											<span className="card-detail-label">Program</span>
+											<span className="card-detail-value" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+												{p.ProgramName || "—"}
+											</span>
+										</div>
+										<div className="card-detail-row">
+											<span className="card-detail-label">Cost</span>
+											<span className="card-detail-value">{formatCurrency(p.ConstructionCost)}</span>
+										</div>
+										<div className="card-detail-row">
+											<span className="card-detail-label">Start</span>
+											<span className="card-detail-value">{formatDate(p.ConsStartDate || p.StartDate)}</span>
+										</div>
+										<div className="card-detail-row">
+											<span className="card-detail-label">End</span>
+											<span className="card-detail-value">{formatDate(p.ConsEndDate || p.EndDate)}</span>
+										</div>
+										<div className="card-detail-row">
+											<span className="card-detail-label">PM</span>
+											<span className="card-detail-value">{p.PM_Name || "—"}</span>
+										</div>
+										<div className="card-detail-row">
+											<span className="card-detail-label">Project #</span>
+											<span className="card-detail-value">{p.ProjectNumber}</span>
+										</div>
 									</div>
 								</div>
 							);
 						})}
 					</div>
 				</div>
+				{/* end sidebar */}
 
-				{/* Map */}
-				<div className="map-container">
-					<div id="map" ref={mapElRef} />
-
-					{/* Detail panel */}
-					{selectedCIP && (
-						<div className="detail-panel">
-							<div className="detail-panel-header">
-								<h6>{selectedCIP.properties.ProjectTitle}</h6>
-								<button
-									onClick={() => {
-										setSelectedCIP(null);
-										highlightEVsForCIP(null);
-									}}
-								>
-									✕
-								</button>
-							</div>
-							<div className="detail-panel-body">
-								<div className="detail-row">
-									<span className="detail-label">Program</span>
-									<span className="detail-value">{selectedCIP.properties.ProgramName}</span>
-								</div>
-								<div className="detail-row">
-									<span className="detail-label">Phase</span>
-									<span className="detail-value">{selectedCIP.properties.ActivePhaseName || selectedCIP.properties.CurrentPhaseDescription}</span>
-								</div>
-								<div className="detail-row">
-									<span className="detail-label">% Complete</span>
-									<span className="detail-value">{selectedCIP.properties.CurrentPhasePercentComplete ?? selectedCIP.properties.ConstPercComp ?? "—"}%</span>
-								</div>
-								<div className="detail-row">
-									<span className="detail-label">Const. Cost</span>
-									<span className="detail-value">{formatCurrency(selectedCIP.properties.ConstructionCost)}</span>
-								</div>
-								<div className="detail-row">
-									<span className="detail-label">Start Date</span>
-									<span className="detail-value">{formatDate(selectedCIP.properties.ConsStartDate || selectedCIP.properties.StartDate)}</span>
-								</div>
-								<div className="detail-row">
-									<span className="detail-label">End Date</span>
-									<span className="detail-value">{formatDate(selectedCIP.properties.ConsEndDate || selectedCIP.properties.EndDate)}</span>
-								</div>
-								<div className="detail-row">
-									<span className="detail-label">Council District</span>
-									<span className="detail-value" style={{ fontSize: "0.7rem" }}>
-										{selectedCIP.properties.CouncilDistrict || "—"}
-									</span>
-								</div>
-								<div className="detail-row">
-									<span className="detail-label">Project #</span>
-									<span className="detail-value">{selectedCIP.properties.ProjectNumber}</span>
-								</div>
-								<div className="detail-row">
-									<span className="detail-label">PM</span>
-									<span className="detail-value">{selectedCIP.properties.PM_Name || "—"}</span>
-								</div>
-
-								{/* EV synergy highlight */}
-								{(() => {
-									const evs = evCountPerCIP.get(selectedCIP.id);
-									if (evs && evs.length > 0) {
-										return (
-											<div className="ev-highlight-section">
-												<h6>⚡ EV Synergy Opportunity</h6>
-												<p>
-													<strong>
-														{evs.length} EV charger{evs.length > 1 ? "s" : ""}
-													</strong>{" "}
-													located within or near this project area. Consider capacity upgrades during construction to minimize disruption.
-												</p>
-											</div>
-										);
-									}
-									return (
-										<div style={{ marginTop: 10, padding: "8px 10px", background: "#f9fafb", borderRadius: 6, border: "1px solid #e5e7eb" }}>
-											<p style={{ margin: 0, fontSize: "0.72rem", color: "#9ca3af" }}>No EV chargers identified near this project area.</p>
-										</div>
-									);
-								})()}
-							</div>
-						</div>
-					)}
+				{/* ── Map (full height, fills remaining width) ── */}
+				<div className="map-wrap">
+					<div ref={mapElRef} style={{ width: "100%", height: "100%" }} />
 
 					{/* Legend */}
-					<div className="legend">
-						<div className="legend-title">Legend</div>
-						<div className="legend-item">
-							<div className="legend-swatch" style={{ background: "#dbeafe", border: "2px solid #3b82f6" }} />
-							CIP Project
-						</div>
-						<div className="legend-item">
-							<div className="legend-swatch" style={{ background: "#fef3c7", border: "2px solid #f59e0b" }} />
-							CIP + EV Synergy ⚡
-						</div>
-						<div className="legend-item">
-							<div className="legend-swatch" style={{ background: "#ede9fe", border: "2px solid #7c3aed" }} />
-							Selected Project
-						</div>
-						<div className="legend-item">
+					<div className="map-legend" aria-hidden="true">
+						{legendItems.map(({ bg, border, label }) => (
+							<div key={label} className="map-legend-item">
+								<div className="legend-swatch" style={{ background: bg, border: `2px solid ${border}` }} />
+								{label}
+							</div>
+						))}
+						<div className="map-legend-item">
 							<div className="legend-dot" style={{ background: "#16a34a" }} />
 							EV Charger
 						</div>
-						<div className="legend-item">
-							<div className="legend-dot" style={{ background: "#f59e0b" }} />
-							EV in Synergy Zone
-						</div>
 					</div>
+
+					{/* Detail panel — shown when a project is selected */}
+					{selectedFeature &&
+						(() => {
+							const p = selectedFeature.properties;
+							const phase = p.ActivePhaseName || p.CurrentPhaseDescription || "Other";
+							const evs = evCountPerCIP.get(selectedFeature.id);
+							const evCount = evs?.length ?? 0;
+							return (
+								<div className="detail-panel">
+									<div className="detail-header">
+										<h6>{p.ProjectTitle || `Project ${p.ProjectNumber}`}</h6>
+										<button onClick={() => selectProject(selectedFeature.id)} aria-label="Close">
+											✕
+										</button>
+									</div>
+									<div className="detail-body">
+										<div className="detail-row">
+											<span className="detail-label">Program</span>
+											<span className="detail-value">{p.ProgramName || "—"}</span>
+										</div>
+										<div className="detail-row">
+											<span className="detail-label">Phase</span>
+											<span className="detail-value">
+												<span className="badge-phase" style={{ background: phaseColor(phase) + "22", color: phaseColor(phase) }}>
+													{phase}
+												</span>
+											</span>
+										</div>
+										<div className="detail-row">
+											<span className="detail-label">% Complete</span>
+											<span className="detail-value">{p.CurrentPhasePercentComplete ?? p.ConstPercComp ?? "—"}%</span>
+										</div>
+										<div className="detail-row">
+											<span className="detail-label">Cost</span>
+											<span className="detail-value">{formatCurrency(p.ConstructionCost)}</span>
+										</div>
+										<div className="detail-row">
+											<span className="detail-label">Start</span>
+											<span className="detail-value">{formatDate(p.ConsStartDate || p.StartDate)}</span>
+										</div>
+										<div className="detail-row">
+											<span className="detail-label">End</span>
+											<span className="detail-value">{formatDate(p.ConsEndDate || p.EndDate)}</span>
+										</div>
+										<div className="detail-row">
+											<span className="detail-label">Project #</span>
+											<span className="detail-value">{p.ProjectNumber}</span>
+										</div>
+										<div className="detail-row">
+											<span className="detail-label">Council District</span>
+											<span className="detail-value" style={{ fontSize: "0.68rem" }}>
+												{p.CouncilDistrict || "—"}
+											</span>
+										</div>
+										<div className="detail-row">
+											<span className="detail-label">PM</span>
+											<span className="detail-value">{p.PM_Name || "—"}</span>
+										</div>
+
+										{evCount > 0 ? (
+											<div className="ev-synergy-box">
+												<h6>⚡ EV Synergy Opportunity</h6>
+												<p>
+													<strong>
+														{evCount} EV charger{evCount > 1 ? "s" : ""}
+													</strong>{" "}
+													located within or near this project area. Consider capacity upgrades during construction to minimise disruption.
+												</p>
+											</div>
+										) : (
+											<div className="no-ev-box">No EV chargers identified near this project area.</div>
+										)}
+									</div>
+								</div>
+							);
+						})()}
 				</div>
+				{/* end map-wrap */}
 			</div>
+			{/* end app-body */}
 		</div>
 	);
 };
