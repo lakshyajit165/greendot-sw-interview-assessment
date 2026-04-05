@@ -174,7 +174,7 @@ const App: React.FC = () => {
 	const [searchQuery, setSearchQuery] = useState("");
 	const [phaseFilter, setPhaseFilter] = useState("All");
 	const [programFilter, setProgramFilter] = useState("All");
-	const [onlySynergy, setOnlySynergy] = useState(false);
+	const [nearEVChargerOnly, setNearEVChargerOnly] = useState(false);
 	const [loading, setLoading] = useState(true);
 
 	// Load data
@@ -186,7 +186,7 @@ const App: React.FC = () => {
 		});
 	}, []);
 
-	// Synergy map
+	// ev Count per project
 	const evCountPerCIP = useMemo(() => {
 		if (!cipData || !evData) return new Map<number, EVFeature[]>();
 		const map = new Map<number, EVFeature[]>();
@@ -218,10 +218,10 @@ const App: React.FC = () => {
 			const phase = f.properties.ActivePhaseName || f.properties.CurrentPhaseDescription || "Other";
 			if (phaseFilter !== "All" && phase !== phaseFilter) return false;
 			if (programFilter !== "All" && f.properties.ProgramName !== programFilter) return false;
-			if (onlySynergy && !evCountPerCIP.has(f.id)) return false;
+			if (nearEVChargerOnly && !evCountPerCIP.has(f.id)) return false;
 			return true;
 		});
-	}, [cipData, searchQuery, phaseFilter, programFilter, onlySynergy, evCountPerCIP]);
+	}, [cipData, searchQuery, phaseFilter, programFilter, nearEVChargerOnly, evCountPerCIP]);
 
 	// Selected feature (for detail panel)
 	const selectedFeature = useMemo(() => (selectedId !== null ? (cipData?.features.find((f) => f.id === selectedId) ?? null) : null), [selectedId, cipData]);
@@ -273,13 +273,13 @@ const App: React.FC = () => {
 		cipLayers.current.forEach((l) => l.remove());
 		cipLayers.current.clear();
 		cipData.features.forEach((feature) => {
-			const hasSynergy = evCountPerCIP.has(feature.id);
+			const hasNearbyEVCharger = evCountPerCIP.has(feature.id);
 			try {
 				const layer = L.geoJSON(feature as any, {
 					style: {
-						color: hasSynergy ? "#f59e0b" : "#3b82f6",
-						weight: hasSynergy ? 2.5 : 1.5,
-						fillColor: hasSynergy ? "#fef3c7" : "#dbeafe",
+						color: hasNearbyEVCharger ? "#f59e0b" : "#3b82f6",
+						weight: hasNearbyEVCharger ? 2.5 : 1.5,
+						fillColor: hasNearbyEVCharger ? "#fef3c7" : "#dbeafe",
 						fillOpacity: 0.4,
 					},
 				});
@@ -337,7 +337,7 @@ const App: React.FC = () => {
 
 	const legendItems = [
 		{ bg: "#dbeafe", border: "#3b82f6", label: "CIP Project" },
-		{ bg: "#fef3c7", border: "#f59e0b", label: "CIP + EV Synergy ⚡" },
+		{ bg: "#fef3c7", border: "#f59e0b", label: "CIP + EV ⚡" },
 		{ bg: "#ede9fe", border: "#7c3aed", label: "Selected" },
 	];
 
@@ -352,7 +352,7 @@ const App: React.FC = () => {
 					</text>
 				</svg>
 				<span className="logo-text">CivilGrid</span>
-				<span className="logo-sub">Los Angeles · CIP &amp; EV Synergy</span>
+				<span className="logo-sub">City of Los Angeles | CIP &amp; EV Charger Map</span>
 			</header>
 
 			{/* ── Body ── */}
@@ -377,9 +377,9 @@ const App: React.FC = () => {
 							</select>
 						</div>
 						<div className="filter-row" style={{ justifyContent: "space-between" }}>
-							<label className="synergy-check">
-								<input type="checkbox" checked={onlySynergy} onChange={(e) => setOnlySynergy(e.target.checked)} />
-								Synergy only ⚡
+							<label className="neary-ev-charger-check">
+								<input type="checkbox" checked={nearEVChargerOnly} onChange={(e) => setNearEVChargerOnly(e.target.checked)} />
+								Near EV charger ⚡
 							</label>
 							<span className="filter-stats">
 								{filteredCIP.length} projects · <strong>⚡ {evCountPerCIP.size} w/ EV</strong>
@@ -580,8 +580,8 @@ const App: React.FC = () => {
 										</div>
 
 										{evCount > 0 ? (
-											<div className="ev-synergy-box">
-												<h6>⚡ EV Synergy Opportunity</h6>
+											<div className="ev-charger-box">
+												<h6>⚡ EV charger nearby</h6>
 												<p>
 													<strong>
 														{evCount} EV charger{evCount > 1 ? "s" : ""}
