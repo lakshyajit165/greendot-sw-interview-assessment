@@ -1,6 +1,7 @@
 [build]
+  base = "civilgrid"
   command = "npm run build"
-  publish = "build"
+  publish = "civilgrid/build"
 
 [[redirects]]
   from = "/*"
