@@ -79,6 +79,7 @@ function pointInPolygon(point: [number, number], vs: [number, number][]): boolea
 			yi = vs[i][1];
 		const xj = vs[j][0],
 			yj = vs[j][1];
+		// eslint-disable-next-line no-mixed-operators
 		const intersect = yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi;
 		if (intersect) inside = !inside;
 	}
@@ -467,7 +468,6 @@ const App: React.FC = () => {
 									role="listitem"
 									tabIndex={0}
 									onKeyDown={(e) => e.key === "Enter" && selectProject(feature.id)}
-									aria-selected={sel}
 								>
 									<div className="card-title">{p.ProjectTitle || `Project ${p.ProjectNumber}`}</div>
 									<div className="card-meta">
