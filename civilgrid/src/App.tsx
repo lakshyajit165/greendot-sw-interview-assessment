@@ -227,12 +227,16 @@ const App: React.FC = () => {
 	const selectedFeature = useMemo(() => (selectedId !== null ? (cipData?.features.find((f) => f.id === selectedId) ?? null) : null), [selectedId, cipData]);
 
 	// Init map
+	/**
+	 * Depends on `loading` intentionally — the map div is only rendered after loading
+	 * completes, so the effect must re-run once `loading` flips to false to find
+	 * a valid container ref. Running on mount alone (empty deps) would bail out
+	 * every time because mapElRef.current is null during the loading screen.
+	 */
 	useEffect(() => {
 		if (loading) return; // data not ready yet, map div not rendered
 
 		const container = mapElRef.current;
-		console.log("[MAP] effect fired");
-		console.log("[MAP] container:", container);
 
 		if (!container) return;
 
