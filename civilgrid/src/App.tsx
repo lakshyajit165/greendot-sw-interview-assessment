@@ -228,10 +228,14 @@ const App: React.FC = () => {
 
 	// Init map
 	useEffect(() => {
+		if (loading) return; // data not ready yet, map div not rendered
+
 		const container = mapElRef.current;
+		console.log("[MAP] effect fired");
+		console.log("[MAP] container:", container);
+
 		if (!container) return;
 
-		// Clean up any previous instance
 		if (mapRef.current) {
 			mapRef.current.remove();
 			mapRef.current = null;
@@ -244,16 +248,17 @@ const App: React.FC = () => {
 		}).addTo(map);
 		mapRef.current = map;
 
-		// Force Leaflet to recalculate size after paint
-		requestAnimationFrame(() => {
+		const ro = new ResizeObserver(() => {
 			map.invalidateSize();
 		});
+		ro.observe(container);
 
 		return () => {
+			ro.disconnect();
 			map.remove();
 			mapRef.current = null;
 		};
-	}, []);
+	}, [loading]); // re-runs when loading flips to false
 
 	// Draw EV markers
 	useEffect(() => {
