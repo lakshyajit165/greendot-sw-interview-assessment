@@ -27,7 +27,7 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 4. Publish directory: `build`
 
 A `netlify.toml` is already included with the correct configuration.
-
+The project is live at https://civilgrid-app.netlify.app/
 No backend or server is required — the app is fully static.
 
 ---
